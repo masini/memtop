@@ -1,43 +1,53 @@
 # memtop
 
-RAM occupata **per applicazione** su macOS, attribuendo a ogni app anche i processi di sistema che ha lanciato (WebContent, VirtualMachine, servizi XPC…), come fa Monitoraggio Attività.
+*[Leggi in italiano](README.it.md)*
 
-## Cosa mostra
+RAM used **per application** on macOS. Each app is also credited with the system processes it launched (WebContent, VirtualMachine, XPC services…), the way Activity Monitor does.
 
-- **In alto**: RAM usata calcolata come Monitoraggio Attività (app + wired + compressa), dettaglio cache/libera/swap e livello di pressione di macOS.
-- **Tabella**: per ogni app RAM, % sulla RAM totale e numero di processi.
-- **In fondo**: totale (GB e %) delle app mostrate e quanto occupa tutto il resto.
+## What it shows
 
-## Uso
+- **Header**: used RAM computed like Activity Monitor (app + wired + compressed), cache/free/swap breakdown and macOS memory pressure.
+- **Table**: for each app, RAM, % of total RAM and number of processes.
+- **Footer**: total (GB and %) of the apps shown and how much everything else uses.
+
+## Usage
 
 ```
-memtop [N]          prime N app (default 15)
-memtop -w [N]       aggiorna ogni 3 secondi (Ctrl+C per uscire)
-memtop -d [N]       dettaglio dei processi attribuiti a ogni app
-memtop -p [N]       vista grezza, raggruppata solo per nome
-memtop --no-color   senza colori (anche con NO_COLOR=1)
-memtop -h           aiuto
+memtop [N]           top N apps (default 15)
+memtop -w [N]        refresh every 3 seconds (Ctrl+C to quit)
+memtop -d [N]        detail of the processes attributed to each app
+memtop -p [N]        raw view, grouped by process name only
+memtop --no-color    no colors (also with NO_COLOR=1)
+memtop --lang en|it  output language
+memtop -h            help
 ```
 
-## Installazione
+## Language
 
-Con un comando (installa in `~/.local/bin`):
+Output is in English by default. For Italian, use `--lang it`, set `MEMTOP_LANG=it`, or run with an Italian locale (`LANG=it_IT.UTF-8`). To make it permanent:
+
+```
+echo 'export MEMTOP_LANG=it' >> ~/.zshrc
+```
+
+## Install
+
+One command (installs to `~/.local/bin`):
 
 ```
 curl -fsSL https://raw.githubusercontent.com/masini/memtop/main/install.sh | sh
 ```
 
-Opzioni: `PREFIX=/altra/cartella` per cambiare destinazione, `MEMTOP_REF=v1.0`
-per un branch o tag specifico. Rilanciare il comando aggiorna memtop.
+Options: `PREFIX=/other/dir` to change the destination, `MEMTOP_REF=v1.1` for a specific branch or tag. Run the command again to update memtop.
 
-Da una copia locale del repo:
+From a local clone:
 
 ```
 ln -s "$PWD/memtop" ~/.local/bin/memtop
 ```
 
-Requisiti: macOS, zsh, python3.
+Requirements: macOS, zsh, python3.
 
-## Note
+## Notes
 
-I valori sono la somma dell'RSS dei processi: la memoria condivisa viene contata più volte, quindi i totali sono leggermente sovrastimati.
+Values are the sum of process RSS: shared memory is counted more than once, so totals are slightly overestimated.

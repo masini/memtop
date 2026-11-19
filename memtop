@@ -1,9 +1,38 @@
 #!/bin/zsh
-# memtop — RAM occupata per applicazione (inclusi i processi di sistema lanciati da essa)
-# Uso: memtop [N]        mostra le prime N app (default 15)
-#      memtop -w [N]     aggiorna ogni 3 secondi (Ctrl+C per uscire)
+# memtop — RAM used per application on macOS (including the system processes it launched)
+# Usage: memtop [N]        show the top N apps (default 15)
+#        memtop -w [N]     refresh every 3 seconds (Ctrl+C to quit)
+
+# Language: English by default; Italian with MEMTOP_LANG=it, --lang it,
+# or when LC_ALL/LC_MESSAGES/LANG starts with "it"
+lang="${MEMTOP_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}}"
+args=()
+while (( $# )); do
+  case "$1" in
+    --lang) lang="$2"; shift 2 ;;
+    --lang=*) lang="${1#--lang=}"; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
+[[ "$lang" == it* ]] && lang=it || lang=en
+
+if [[ $lang == it ]]; then
+  L_UNKNOWN="opzione sconosciuta"; L_BADARG="argomento non valido"
+  L_USED="usata"; L_PRESSURE="pressione"; L_NORMAL="normale"; L_WARN="ATTENZIONE"; L_CRIT="CRITICA"
+  L_COMP="compressa"; L_CACHE="cache file"; L_FREE="libera"
+  L_FROM_OTHERS="da altri processi"; L_OTHER_PROCS="altri %d processi"
+  L_TOTAL="TOTALE %d app mostrate"; L_REST="altre %d app/processi"
+else
+  L_UNKNOWN="unknown option"; L_BADARG="invalid argument"
+  L_USED="used"; L_PRESSURE="pressure"; L_NORMAL="normal"; L_WARN="WARNING"; L_CRIT="CRITICAL"
+  L_COMP="compressed"; L_CACHE="file cache"; L_FREE="free"
+  L_FROM_OTHERS="from other processes"; L_OTHER_PROCS="%d other processes"
+  L_TOTAL="TOTAL %d apps shown"; L_REST="%d other apps/processes"
+fi
 
 usage() {
+  if [[ $lang == it ]]; then
   cat <<'EOF'
 memtop — RAM occupata per applicazione (somma di tutti i processi dell'app)
 
@@ -13,6 +42,7 @@ Uso:
   memtop -d [N]       dettaglio: mostra i processi di sistema attribuiti a ogni app
   memtop -p [N]       vista "grezza": raggruppa solo per nome, senza attribuzione
   memtop --no-color   senza colori (anche con NO_COLOR=1)
+  memtop --lang en|it lingua (anche con MEMTOP_LANG=it)
   memtop -h | --help  mostra questo aiuto
 
 Esempi:
@@ -27,31 +57,64 @@ Note:
     XPC...) vengono sommati all'app che li ha lanciati, come fa Monitoraggio
     Attività. I comandi lanciati da terminale/IDE (claude, python...) restano
     separati.
+  - In fondo: totale (GB e %) delle app mostrate e quanto occupa il resto.
   - Colori RAM per app: rosso >= 4 GB, giallo >= 1 GB, verde < 1 GB.
     RAM usata: verde < 70%, giallo < 85%, rosso oltre.
   - I valori sono la somma dell'RSS dei processi: la memoria condivisa
     viene contata più volte, quindi i totali sono leggermente sovrastimati.
 EOF
+  else
+  cat <<'EOF'
+memtop — RAM used per application (sum of all the app's processes)
+
+Usage:
+  memtop [N]          show the top N apps (default 15)
+  memtop -w [N]       refresh every 3 seconds (Ctrl+C to quit)
+  memtop -d [N]       detail: show the system processes attributed to each app
+  memtop -p [N]       "raw" view: group by process name only, no attribution
+  memtop --no-color   no colors (also with NO_COLOR=1)
+  memtop --lang en|it language (also with MEMTOP_LANG=it)
+  memtop -h | --help  show this help
+
+Examples:
+  memtop              top 15 apps
+  memtop 30           top 30 apps
+  memtop -w 10        top 10 apps, live refresh
+
+Notes:
+  - Header: used RAM computed like Activity Monitor (app + wired +
+    compressed), cache/free/swap breakdown and macOS memory pressure.
+  - Attribution: system processes (WebContent, VirtualMachine, XPC
+    services...) are added to the app that launched them, like Activity
+    Monitor does. Commands started from a terminal/IDE (claude, python...)
+    are kept separate.
+  - Footer: total (GB and %) of the apps shown and how much the rest uses.
+  - Per-app RAM colors: red >= 4 GB, yellow >= 1 GB, green < 1 GB.
+    Used RAM: green < 70%, yellow < 85%, red above.
+  - Values are the sum of process RSS: shared memory is counted more
+    than once, so totals are slightly overestimated.
+EOF
+  fi
 }
 
 watch=0; nocolor=0; mode=app; verbose=0
 while [[ "$1" == -* ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    -w) watch=1 ;;
+    -w|--watch) watch=1 ;;
     --no-color) nocolor=1 ;;
-    -d|--dettaglio) verbose=1 ;;
-    -p|--processi) mode=raw ;;
-    *) echo "memtop: opzione sconosciuta: $1" >&2; echo >&2; usage >&2; exit 1 ;;
+    -d|--detail|--dettaglio) verbose=1 ;;
+    -p|--processes|--processi) mode=raw ;;
+    *) echo "memtop: $L_UNKNOWN: $1" >&2; echo >&2; usage >&2; exit 1 ;;
   esac
   shift
 done
 N=${1:-15}
 if [[ ! "$N" =~ ^[0-9]+$ ]]; then
-  echo "memtop: argomento non valido: $N" >&2; echo >&2; usage >&2; exit 1
+  echo "memtop: $L_BADARG: $N" >&2; echo >&2; usage >&2; exit 1
 fi
 
-# Colori: attivi solo su terminale; disattivabili con NO_COLOR=1 o --no-color
+# Colors: only on a terminal; disable with NO_COLOR=1 or --no-color
 if [[ -t 1 && -z "$NO_COLOR" && "$nocolor" != 1 ]]; then
   R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' B=$'\e[1m' D=$'\e[2m' X=$'\e[0m'
 else
@@ -59,17 +122,19 @@ else
 fi
 
 show() {
-  # Riepilogo calcolato come Monitoraggio Attività:
-  #   App = pagine anonime pageable - purgeable; Usata = App + Wired + Compressa
+  # Summary computed like Activity Monitor:
+  #   App = pageable anonymous pages - purgeable; Used = App + Wired + Compressed
   #   Cache = file-backed + purgeable
   local mem pg internal purg lvl
   mem=$(sysctl -n hw.memsize); pg=$(sysctl -n hw.pagesize)
   internal=$(sysctl -n vm.page_pageable_internal_count)
   purg=$(sysctl -n vm.page_purgeable_count)
   lvl=$(sysctl -n kern.memorystatus_vm_pressure_level)
-  case "$lvl" in 1) lvl="${G}normale${X}" ;; 2) lvl="${Y}${B}ATTENZIONE${X}" ;; 4) lvl="${R}${B}CRITICA${X}" ;; *) lvl="n/d" ;; esac
+  case "$lvl" in 1) lvl="${G}${L_NORMAL}${X}" ;; 2) lvl="${Y}${B}${L_WARN}${X}" ;; 4) lvl="${R}${B}${L_CRIT}${X}" ;; *) lvl="n/a" ;; esac
   vm_stat | awk -v mem="$mem" -v pg="$pg" -v internal="$internal" -v purg="$purg" \
                -v lvl="$lvl" -v swap="$(sysctl -n vm.swapusage)" \
+               -v L_USED="$L_USED" -v L_PRESSURE="$L_PRESSURE" -v L_COMP="$L_COMP" \
+               -v L_CACHE="$L_CACHE" -v L_FREE="$L_FREE" \
                -v R="$R" -v G="$G" -v Y="$Y" -v C="$C" -v B="$B" -v D="$D" -v X="$X" '
     function gb(p) { return p*pg/1073741824 }
     /Pages free:/                   { gsub(/\./,"",$3); free=$3 }
@@ -83,20 +148,23 @@ show() {
       split(swap, s, " ")
       su=s[6]/1024; st=s[3]/1024
       sc = (st>0 && su/st>=0.8) ? R : (su>=1 ? Y : G)
-      printf "%sRAM %.0f GB%s  │  usata %s%s%.1f GB (%.0f%%)%s  │  pressione: %s\n", B, mem/1073741824, X, uc, B, gb(used), pct, X, lvl
-      printf "  %sapp%s %.1f GB · %swired%s %.1f GB · %scompressa%s %.1f GB · %scache file%s %.1f GB · %slibera%s %s%.1f GB%s · %sswap%s %s%.1f/%.1f GB%s\n\n", \
-             D,X,gb(app), D,X,gb(wired), D,X,gb(comp), D,X,gb(file+purg), D,X,G,gb(free),X, D,X,sc,su,st,X
+      printf "%sRAM %.0f GB%s  │  %s %s%s%.1f GB (%.0f%%)%s  │  %s: %s\n", B, mem/1073741824, X, L_USED, uc, B, gb(used), pct, X, L_PRESSURE, lvl
+      printf "  %sapp%s %.1f GB · %swired%s %.1f GB · %s%s%s %.1f GB · %s%s%s %.1f GB · %s%s%s %s%.1f GB%s · %sswap%s %s%.1f/%.1f GB%s\n\n", \
+             D,X,gb(app), D,X,gb(wired), D,L_COMP,X,gb(comp), D,L_CACHE,X,gb(file+purg), D,L_FREE,X,G,gb(free),X, D,X,sc,su,st,X
     }'
   printf "%s%10s  %6s  %5s  %s%s\n" "$B$C" "RAM" "% RAM" "PROC" "APP" "$X"
   printf "%s%10s  %6s  %5s  %s%s\n" "$D" "----------" "------" "-----" "------------------------------" "$X"
-  R="$R" G="$G" Y="$Y" D="$D" X="$X" B="$B" python3 -I - "$N" "$mode" "$verbose" "$mem" <<'PY'
+  R="$R" G="$G" Y="$Y" D="$D" X="$X" B="$B" \
+  L_FROM_OTHERS="$L_FROM_OTHERS" L_OTHER_PROCS="$L_OTHER_PROCS" L_TOTAL="$L_TOTAL" L_REST="$L_REST" \
+  python3 -I - "$N" "$mode" "$verbose" "$mem" <<'PY'
 import ctypes, os, re, subprocess, sys
 N, mode, verbose = int(sys.argv[1]), sys.argv[2], sys.argv[3] == "1"
 mem_kb = int(sys.argv[4]) / 1024
-R, G, Y, D, X = (os.environ.get(k, "") for k in "RGYDX")
+R, G, Y, D, X, B = (os.environ.get(k, "") for k in "RGYDXB")
+L = {k: os.environ[k] for k in ("L_FROM_OTHERS", "L_OTHER_PROCS", "L_TOTAL", "L_REST")}
 
-# API di macOS usata da Monitoraggio Attività: chi è "responsabile" di un processo
-# (es. un servizio XPC WebContent lanciato da PowerPoint -> PowerPoint)
+# macOS API used by Activity Monitor: which process is "responsible" for another
+# (e.g. a WebContent XPC service launched by PowerPoint -> PowerPoint)
 try:
     resp = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
     resp.restype, resp.argtypes = ctypes.c_int, [ctypes.c_int]
@@ -114,11 +182,11 @@ def name(comm):
     return m.group(1) if m else comm.rsplit("/", 1)[-1]
 
 def own_app(comm):
-    # processo dentro un bundle .app di terze parti: resta della sua app
+    # process inside a third-party .app bundle: it stays with its own app
     return ".app/" in comm and not comm.startswith(("/System/", "/usr/", "/Library/Apple/"))
 
-# Se il responsabile è un terminale/IDE, il processo è un comando lanciato a mano
-# (claude, python, node...): lo teniamo separato invece di sommarlo al terminale.
+# If the responsible process is a terminal/IDE, this is a command started by hand
+# (claude, python, node...): keep it separate instead of adding it to the terminal.
 TERMINALS = {"Terminal", "iTerm", "iTerm2", "Ghostty", "Warp", "WezTerm", "Alacritty",
              "kitty", "Hyper", "Tabby", "Visual Studio Code", "Code", "Cursor", "Windsurf",
              "Zed", "IntelliJ IDEA", "PyCharm", "RustRover", "WebStorm", "GoLand",
@@ -149,7 +217,7 @@ for owner, g in shown:
     mb = g["rss"] / 1024
     col = R if mb >= 4096 else (Y if mb >= 1024 else G)
     extra = sum(g["parts"].values())
-    tag = f"  {D}(+{fmt(extra)} da altri processi){X}" if extra and not verbose else ""
+    tag = f"  {D}(+{fmt(extra)} {L['L_FROM_OTHERS']}){X}" if extra and not verbose else ""
     pct = g["rss"] / mem_kb * 100
     print(f"{col}{fmt(g['rss']):>10}{X}  {col}{pct:5.1f}%{X}  {D}{g['n']:5d}{X}  {owner}{tag}")
     if verbose:
@@ -159,21 +227,20 @@ for owner, g in shown:
         if len(parts) > 5:
             rest = parts[5:]
             rk = sum(kb for _, kb in rest)
-            print(f"{D}{fmt(rk):>10}  {rk / mem_kb * 100:5.1f}%         └ altri {len(rest)} processi{X}")
+            print(f"{D}{fmt(rk):>10}  {rk / mem_kb * 100:5.1f}%         └ {L['L_OTHER_PROCS'] % len(rest)}{X}")
 
-# Totale delle app mostrate (impatto sul computer) + resto non mostrato
-B = os.environ.get("B", "")
+# Total of the apps shown (impact on the computer) + everything not shown
 tot = sum(g["rss"] for _, g in shown)
 tn = sum(g["n"] for _, g in shown)
 tpct = tot / mem_kb * 100
 tcol = R if tpct >= 85 else (Y if tpct >= 70 else G)
 print(f"{D}{'----------':>10}  {'------':>6}  {'-----':>5}  {'-' * 30}{X}")
-print(f"{B}{tcol}{fmt(tot):>10}  {tpct:5.1f}%{X}  {B}{tn:5d}  TOTALE {len(shown)} app mostrate{X}")
+print(f"{B}{tcol}{fmt(tot):>10}  {tpct:5.1f}%{X}  {B}{tn:5d}  {L['L_TOTAL'] % len(shown)}{X}")
 rest = ranked[N:]
 if rest:
     rk = sum(g["rss"] for _, g in rest)
     rn = sum(g["n"] for _, g in rest)
-    print(f"{D}{fmt(rk):>10}  {rk / mem_kb * 100:5.1f}%  {rn:5d}  altre {len(rest)} app/processi{X}")
+    print(f"{D}{fmt(rk):>10}  {rk / mem_kb * 100:5.1f}%  {rn:5d}  {L['L_REST'] % len(rest)}{X}")
 PY
 }
 

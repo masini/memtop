@@ -1,0 +1,184 @@
+#!/bin/zsh
+# memtop — RAM occupata per applicazione (inclusi i processi di sistema lanciati da essa)
+# Uso: memtop [N]        mostra le prime N app (default 15)
+#      memtop -w [N]     aggiorna ogni 3 secondi (Ctrl+C per uscire)
+
+usage() {
+  cat <<'EOF'
+memtop — RAM occupata per applicazione (somma di tutti i processi dell'app)
+
+Uso:
+  memtop [N]          mostra le prime N app (default 15)
+  memtop -w [N]       aggiorna ogni 3 secondi (Ctrl+C per uscire)
+  memtop -d [N]       dettaglio: mostra i processi di sistema attribuiti a ogni app
+  memtop -p [N]       vista "grezza": raggruppa solo per nome, senza attribuzione
+  memtop --no-color   senza colori (anche con NO_COLOR=1)
+  memtop -h | --help  mostra questo aiuto
+
+Esempi:
+  memtop              prime 15 app
+  memtop 30           prime 30 app
+  memtop -w 10        prime 10 app, aggiornamento continuo
+
+Note:
+  - In alto: RAM usata calcolata come Monitoraggio Attività (app + wired +
+    compressa), dettaglio cache/libera/swap e livello di pressione di macOS.
+  - Attribuzione: i processi di sistema (WebContent, VirtualMachine, servizi
+    XPC...) vengono sommati all'app che li ha lanciati, come fa Monitoraggio
+    Attività. I comandi lanciati da terminale/IDE (claude, python...) restano
+    separati.
+  - Colori RAM per app: rosso >= 4 GB, giallo >= 1 GB, verde < 1 GB.
+    RAM usata: verde < 70%, giallo < 85%, rosso oltre.
+  - I valori sono la somma dell'RSS dei processi: la memoria condivisa
+    viene contata più volte, quindi i totali sono leggermente sovrastimati.
+EOF
+}
+
+watch=0; nocolor=0; mode=app; verbose=0
+while [[ "$1" == -* ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -w) watch=1 ;;
+    --no-color) nocolor=1 ;;
+    -d|--dettaglio) verbose=1 ;;
+    -p|--processi) mode=raw ;;
+    *) echo "memtop: opzione sconosciuta: $1" >&2; echo >&2; usage >&2; exit 1 ;;
+  esac
+  shift
+done
+N=${1:-15}
+if [[ ! "$N" =~ ^[0-9]+$ ]]; then
+  echo "memtop: argomento non valido: $N" >&2; echo >&2; usage >&2; exit 1
+fi
+
+# Colori: attivi solo su terminale; disattivabili con NO_COLOR=1 o --no-color
+if [[ -t 1 && -z "$NO_COLOR" && "$nocolor" != 1 ]]; then
+  R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' B=$'\e[1m' D=$'\e[2m' X=$'\e[0m'
+else
+  R= G= Y= C= B= D= X=
+fi
+
+show() {
+  # Riepilogo calcolato come Monitoraggio Attività:
+  #   App = pagine anonime pageable - purgeable; Usata = App + Wired + Compressa
+  #   Cache = file-backed + purgeable
+  local mem pg internal purg lvl
+  mem=$(sysctl -n hw.memsize); pg=$(sysctl -n hw.pagesize)
+  internal=$(sysctl -n vm.page_pageable_internal_count)
+  purg=$(sysctl -n vm.page_purgeable_count)
+  lvl=$(sysctl -n kern.memorystatus_vm_pressure_level)
+  case "$lvl" in 1) lvl="${G}normale${X}" ;; 2) lvl="${Y}${B}ATTENZIONE${X}" ;; 4) lvl="${R}${B}CRITICA${X}" ;; *) lvl="n/d" ;; esac
+  vm_stat | awk -v mem="$mem" -v pg="$pg" -v internal="$internal" -v purg="$purg" \
+               -v lvl="$lvl" -v swap="$(sysctl -n vm.swapusage)" \
+               -v R="$R" -v G="$G" -v Y="$Y" -v C="$C" -v B="$B" -v D="$D" -v X="$X" '
+    function gb(p) { return p*pg/1073741824 }
+    /Pages free:/                   { gsub(/\./,"",$3); free=$3 }
+    /Pages wired down:/             { gsub(/\./,"",$4); wired=$4 }
+    /File-backed pages:/            { gsub(/\./,"",$3); file=$3 }
+    /Pages occupied by compressor:/ { gsub(/\./,"",$5); comp=$5 }
+    END {
+      app=internal-purg; used=app+wired+comp
+      pct=gb(used)*1073741824/mem*100
+      uc = pct>=85 ? R : (pct>=70 ? Y : G)
+      split(swap, s, " ")
+      su=s[6]/1024; st=s[3]/1024
+      sc = (st>0 && su/st>=0.8) ? R : (su>=1 ? Y : G)
+      printf "%sRAM %.0f GB%s  │  usata %s%s%.1f GB (%.0f%%)%s  │  pressione: %s\n", B, mem/1073741824, X, uc, B, gb(used), pct, X, lvl
+      printf "  %sapp%s %.1f GB · %swired%s %.1f GB · %scompressa%s %.1f GB · %scache file%s %.1f GB · %slibera%s %s%.1f GB%s · %sswap%s %s%.1f/%.1f GB%s\n\n", \
+             D,X,gb(app), D,X,gb(wired), D,X,gb(comp), D,X,gb(file+purg), D,X,G,gb(free),X, D,X,sc,su,st,X
+    }'
+  printf "%s%10s  %6s  %5s  %s%s\n" "$B$C" "RAM" "% RAM" "PROC" "APP" "$X"
+  printf "%s%10s  %6s  %5s  %s%s\n" "$D" "----------" "------" "-----" "------------------------------" "$X"
+  R="$R" G="$G" Y="$Y" D="$D" X="$X" B="$B" python3 -I - "$N" "$mode" "$verbose" "$mem" <<'PY'
+import ctypes, os, re, subprocess, sys
+N, mode, verbose = int(sys.argv[1]), sys.argv[2], sys.argv[3] == "1"
+mem_kb = int(sys.argv[4]) / 1024
+R, G, Y, D, X = (os.environ.get(k, "") for k in "RGYDX")
+
+# API di macOS usata da Monitoraggio Attività: chi è "responsabile" di un processo
+# (es. un servizio XPC WebContent lanciato da PowerPoint -> PowerPoint)
+try:
+    resp = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
+    resp.restype, resp.argtypes = ctypes.c_int, [ctypes.c_int]
+except Exception:
+    resp = None
+
+procs = {}
+out = subprocess.run(["ps", "-axo", "pid=,rss=,comm="], capture_output=True, text=True).stdout
+for line in out.splitlines():
+    pid, rss, comm = line.strip().split(None, 2)
+    procs[int(pid)] = (int(rss), comm)
+
+def name(comm):
+    m = re.search(r"/([^/]+)\.app/", comm)
+    return m.group(1) if m else comm.rsplit("/", 1)[-1]
+
+def own_app(comm):
+    # processo dentro un bundle .app di terze parti: resta della sua app
+    return ".app/" in comm and not comm.startswith(("/System/", "/usr/", "/Library/Apple/"))
+
+# Se il responsabile è un terminale/IDE, il processo è un comando lanciato a mano
+# (claude, python, node...): lo teniamo separato invece di sommarlo al terminale.
+TERMINALS = {"Terminal", "iTerm", "iTerm2", "Ghostty", "Warp", "WezTerm", "Alacritty",
+             "kitty", "Hyper", "Tabby", "Visual Studio Code", "Code", "Cursor", "Windsurf",
+             "Zed", "IntelliJ IDEA", "PyCharm", "RustRover", "WebStorm", "GoLand",
+             "CLion", "DataGrip", "Android Studio", "Xcode", "Sublime Text"}
+
+groups = {}
+for pid, (rss, comm) in procs.items():
+    own = name(comm)
+    owner = own
+    if mode == "app" and resp and not own_app(comm):
+        r = resp(pid)
+        if r > 0 and r != pid and r in procs:
+            cand = name(procs[r][1])
+            if cand not in TERMINALS:
+                owner = cand
+    g = groups.setdefault(owner, {"rss": 0, "n": 0, "parts": {}})
+    g["rss"] += rss; g["n"] += 1
+    if owner != own:
+        g["parts"][own] = g["parts"].get(own, 0) + rss
+
+def fmt(kb):
+    mb = kb / 1024
+    return f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+ranked = sorted(groups.items(), key=lambda kv: -kv[1]["rss"])
+shown = ranked[:N]
+for owner, g in shown:
+    mb = g["rss"] / 1024
+    col = R if mb >= 4096 else (Y if mb >= 1024 else G)
+    extra = sum(g["parts"].values())
+    tag = f"  {D}(+{fmt(extra)} da altri processi){X}" if extra and not verbose else ""
+    pct = g["rss"] / mem_kb * 100
+    print(f"{col}{fmt(g['rss']):>10}{X}  {col}{pct:5.1f}%{X}  {D}{g['n']:5d}{X}  {owner}{tag}")
+    if verbose:
+        parts = sorted(g["parts"].items(), key=lambda kv: -kv[1])
+        for part, kb in parts[:5]:
+            print(f"{D}{fmt(kb):>10}  {kb / mem_kb * 100:5.1f}%         └ {part}{X}")
+        if len(parts) > 5:
+            rest = parts[5:]
+            rk = sum(kb for _, kb in rest)
+            print(f"{D}{fmt(rk):>10}  {rk / mem_kb * 100:5.1f}%         └ altri {len(rest)} processi{X}")
+
+# Totale delle app mostrate (impatto sul computer) + resto non mostrato
+B = os.environ.get("B", "")
+tot = sum(g["rss"] for _, g in shown)
+tn = sum(g["n"] for _, g in shown)
+tpct = tot / mem_kb * 100
+tcol = R if tpct >= 85 else (Y if tpct >= 70 else G)
+print(f"{D}{'----------':>10}  {'------':>6}  {'-----':>5}  {'-' * 30}{X}")
+print(f"{B}{tcol}{fmt(tot):>10}  {tpct:5.1f}%{X}  {B}{tn:5d}  TOTALE {len(shown)} app mostrate{X}")
+rest = ranked[N:]
+if rest:
+    rk = sum(g["rss"] for _, g in rest)
+    rn = sum(g["n"] for _, g in rest)
+    print(f"{D}{fmt(rk):>10}  {rk / mem_kb * 100:5.1f}%  {rn:5d}  altre {len(rest)} app/processi{X}")
+PY
+}
+
+if (( watch )); then
+  while true; do clear; show; sleep 3; done
+else
+  show
+fi

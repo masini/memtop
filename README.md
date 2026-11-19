@@ -27,15 +27,6 @@ Con un comando (installa in `~/.local/bin`):
 curl -fsSL https://raw.githubusercontent.com/masini/memtop/main/install.sh | sh
 ```
 
-Finché il repo è privato serve un token GitHub con accesso al repo
-(chi ha `gh` loggato può usare `gh auth token`):
-
-```
-export GITHUB_TOKEN=$(gh auth token)
-curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/masini/memtop/main/install.sh | sh
-```
-
 Opzioni: `PREFIX=/altra/cartella` per cambiare destinazione, `MEMTOP_REF=v1.0`
 per un branch o tag specifico. Rilanciare il comando aggiorna memtop.
 
